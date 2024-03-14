@@ -47,7 +47,7 @@ reference. Look for [brackets].
 
 ## Introduction
 
-Developers want to build applications that are fast using [SharedArrayBuffers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) (SAB), which can improve computation time by ~40%. But SharedArrayBuffers allow to create high-precision timers that can be exploited in a [Spectre](https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)) attack, allowing to leak cross-origin user data. To mitigate the risk, SharedArrayBuffers are gated behind [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) (COI). CrossOriginIsolation requires to deploy both [CrossOriginOpenerPolicy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy) (COOP) and [CrossOriginEmbedderPolicy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) (COEP). Both have proven hard to deploy, COOP because it prevents communication with cross-origin popups, and COEP because it imposes restrictions on third-party embeds. Finally, the whole COOP + COEP model is focused on providing access to SharedArrayBuffers to the top-level frame. Cross-origin embeds can only use SABs if their embedder deploys crossOriginIsolation and delegates the permission to use COI-gated APIs, making the availability of SABs in third-party iframes very unreliable.
+Developers want to build applications that are fast using [SharedArrayBuffers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) (SAB), which can improve computation time by ~40%. But SharedArrayBuffers allow to create high-precision timers that can be exploited in a [Spectre](https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)) attack, allowing to leak cross-origin user data. To mitigate the risk, SharedArrayBuffers are gated behind [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) (COI). CrossOriginIsolation requires to deploy both [Cross-Origin-Opener-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy) (COOP) and [Cross-Origin-Embedder-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) (COEP). Both have proven hard to deploy, COOP because it prevents communication with cross-origin popups, and COEP because it imposes restrictions on third-party embeds. Finally, the whole COOP + COEP model is focused on providing access to SharedArrayBuffers to the top-level frame. Cross-origin embeds can only use SABs if their embedder deploys crossOriginIsolation and delegates the permission to use COI-gated APIs, making the availability of SABs in third-party iframes very unreliable.
 
 The API proposed in this document, Document-Isolation-Policy, is proposing to solve these deployment concerns by relying on the browser [Out-of-Process-Iframe](https://www.chromium.org/developers/design-documents/oop-iframes/) capability. It will provide a way to securely build fast applications using SharedArrayBuffers while maintaining communication with cross-origin popups (needed for OAuth and payment flows) and not requiring extra work to embed cross-origin iframes. Finally, it will be available for embedded widgets as well as top-level frames, allowing to build efficient compute heavy widgets that are embedded across a variety of websites (e.g. photo library, video conference iframe, etc…).
 
@@ -62,17 +62,90 @@ While the original [crossOriginIsolation](https://developer.mozilla.org/en-US/do
 
 ## Use cases
 
-### Use case 1:
+### App with cross-origin popup
 
 The user would like some of their compute heavy web apps to be faster (e.g. games, spreadsheet, photo editing, videoconferencing). To make these apps faster, relying on multithreading and shared memory is needed, but this means having access to SharedArrayBuffers. Currently, a web app cannot use shared memory and cross-origin popups at the same time due to the restriction imposed by crossOriginIsolation. This means the web app cannot use 3rd party OAuth or payment flows.
 
-### Use case 2
+### App with 3rd party iframe
 
 The user would like some of their compute heavy web apps to be faster (e.g. games, spreadsheet, photo editing, videoconferencing). To make these apps faster, relying on multithreading and shared memory is needed, but this means having access to SharedArrayBuffers. Currently, a web app using shared memory is limited in the 3rd party iframes that it can embed. For example, it cannot embed personalized ads unless the ads do a lot of work to support COEP themselves. Personalized ads are the revenue model for a lot of free web apps, so that means those free web apps cannot use shared memory unless the whole ad ecosystem deploys COEP.
 
-### Use case 3
+### Embedded widget
 
 The user would like some of the embedded widgets on the page they browse to be faster (e.g. photo library widget, map widget, video chat widget, ...). To make these widgets faster, relying on multithreading and shared memory is needed, but this means having access to SharedArrayBuffers. But access to SharedArrayBuffers is only possible if the embedder of the widget deploys crossOriginIsolation (with the constraints described in the previous use cases). So a widget embedded in a wide variety of websites cannot use shared memory to improve its performance.
+
+## Background: Process wide XS-Leaks and the crossOriginIsolated model
+
+### Same-origin policy
+
+The same-origin policy is a critical security mechanism in the web that helps to isolate different websites and prevent them from accessing each other's data. It works by restricting the interaction between web pages based on their origin, which is determined by the combination of the scheme (e.g., HTTP or HTTPS), the host name, and the port number.
+
+Under the same-origin policy, web pages can only access data from other pages that have the same origin. This helps protect user data and prevents malicious websites from accessing sensitive information, such as passwords or credit card numbers.
+
+There are a few exceptions to the same-origin policy, such as cross-origin resource sharing (CORS). However, these exceptions are carefully designed to preserve the security of user data.
+
+The same-origin policy is an essential part of web security, and it helps to protect users from a variety of attacks. By preventing websites from accessing each other's data, the same-origin policy helps to keep user data safe and secure, and allows the web to remain composable.
+
+### Process wide XS-Leaks
+Unfortunately, several web APIs allow an attacker to bypass the same-origin policy and to leak information from authenticated cross-origin resources. These kinds of vulnerabilities are known as XS-Leaks. In particular, we will focus on process-wide XS-Leaks, which can affect any resource loaded in the same renderer process as an attacker.
+
+Process-wide XS-Leaks can be direct. For example, [performance.measureUserAgentSpecificMemory](https://developer.mozilla.org/en-US/docs/Web/API/Performance/measureUserAgentSpecificMemory) allows to easily leak a resource size. Leaking a resource size can be exploited in various cross-site search attacks that target resources that vary based on query parameters.
+
+Process-wide XS-Leaks can also take the form of a [Spectre](https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)) attack. Spectre is a security vulnerability affecting modern processors, enabling attackers to read arbitrary data from the process they are executing in. It exploits speculative execution, where processors execute instructions before receiving all necessary data, to access and steal sensitive information. This includes authenticated cross-origin resources loaded in the process. Spectre attacks’ efficiency is correlated to timer resolution. More precise timers make Spectre attacks faster. This includes direct timers like [performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now), but also timers constructed through SharedArrayBuffers.
+
+In the absence of [Site Isolation](https://www.chromium.org/Home/chromium-security/site-isolation/), an attacker can load a wide variety of authenticated cross-origin resources in their process:
+
+![Iframes, subresources and popups are placed in the same process without SiteIsolation](/background1.png)
+
+*Without Site Isolation, all resources (documents + subresources) for a Browsing Context Group are rendered in the same process.*
+
+All of the cross-origin resources loaded into a process are vulnerable, unless they load through [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)[^1]. This is because cross-origin CORS requests are sent without credentials by default. In order to make credentialled requests, the cross-origin endpoint has to opt into the request being credentialled and the content shared with the cross-origin requestor.
+
+[^1]: Note that the CORS caveat only applies to subresources directly loaded by the attacker origin. All other subresources are still at risk.
+
+![Without SiteIsolation, all resources are at risk from an attacker](/background2.png)
+
+*Without Site Isolation, all non-CORS subresources and all documents are at risk from an attacker.*
+
+### The cross-origin isolation model
+The [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) model was developed as a way to address the process-wide XS-Leak threat without requiring Site Isolation and CORS for all subresources.
+
+First, cross-origin isolation identifies APIs that pose higher risk of process wide XS-Leaks and gate them behind a set of policies (COOP and COEP). These APIs are:
+- [performance.measureUserAgentSpecificMemory()](https://developer.mozilla.org/en-US/docs/Web/API/Performance/measureUserAgentSpecificMemory)
+- high resolution [performance.now()](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now)
+- [SharedArrayBuffers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer)
+
+[Cross-Origin-Embedder-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) (COEP) addresses the threat to subresources and embedded iframes. It requires non-CORS subresources to either opt into being loaded in the COEP context (COEP require-corp). Or it loads them without credentials (COEP credentialless).
+
+![COEP asks subresources for an opt-in or load them without credentials](/background3.png)
+
+*COEP protects subresources by asking for an opt-in or loading cross-origin resources without credentials.*
+
+In the absence of Out-of-process-iframes, iframes are loaded in the same-process as their parent. To protect cross-origin iframes from their embedder, COEP requires cross-origin iframes embedded by a COEP document to opt into being embedded by sending a CORP header.
+
+For the model to work, COEP needs to apply to all documents in the process. So COEP requires documents embedded in a COEP document to also deploy COEP.
+
+Because this is complex to deploy, Chrome also introduced credentialless iframes. A credentialless iframe allows a COEP document to embed documents without COEP. However, those documents only have access to an ephemeral storage partition, initially blank. This ensures that they do not have access to stored credentials. This is safe in the XS-Leak threat model because we are concerned with personalized user data.
+
+![COEP ensures all resources of a page are protected](/background4.png)
+
+*COEP protects cross-origin resources of the page.*
+
+[Cross-Origin-Opener-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy) (COOP) protects other pages that would normally be loaded in the same process as an attacker without Site Isolation. COOP same-origin triggers a browsing context group switch when navigating to a page with a different top-level origin and/or COOP. Pages in a different browsing context group cannot communicate with each other, so it is safe to place them in different processes, even without Out-Of-Process-IFrames (OOPIF).
+
+The proposed [COOP restrict-properties](https://github.com/WICG/coop-restrict-properties) restrict WindowProxy properties available to documents in pages with a different top-level origin. It also prevents synchronous DOM access between documents in pages with a different top-level origin. The latter part allows the browser to place the two pages in different processes.
+
+![COOP restricts access to popups](/background5.png)
+
+*COOP protects other pages from an attacker by restricting access to pages opened.*
+
+When the top-level frame enforces both COOP and COEP, the page becomes cross-origin isolated. It gains access to powerful but leaky APIs.
+
+![COI is a safe model for powerful APIs](/background6.png)
+
+*CrossOriginIsolation provides a secure model to gain access to leaky APIs even in the absence of OOPIF.*
+
+Finally, the last piece of the puzzle is a [permission policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy). By default, cross-origin iframes do not have access to COI-gated APIs, even if their parent has enabled COI. The parent must delegate the permission for them to gain access to the APIs. This ensures that the parent is adequately protected against XS-Leaks exploits coming from its child frames.
 
 ## [Potential Solution]
 
