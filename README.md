@@ -147,6 +147,32 @@ When the top-level frame enforces both COOP and COEP, the page becomes cross-ori
 
 Finally, the last piece of the puzzle is a [permission policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy). By default, cross-origin iframes do not have access to COI-gated APIs, even if their parent has enabled COI. The parent must delegate the permission for them to gain access to the APIs. This ensures that the parent is adequately protected against XS-Leaks exploits coming from its child frames.
 
+### Cross origin isolation limits
+If crossOriginIsolation is secure, why change the model? Essentially, because it is hard to deploy, which slows down adoption of multi-threading features (SABs, WASM threads) needed to improve web app performance.
+
+#### Deployability
+The biggest issue for COI deployment is the cascading requirements that COEP imposes. In order for a page to be crossOriginIsolated, all its frames must enforce COEP. This has proven intractable for a large number of pages.
+
+In order to alleviate the issue, we introduced [credentialless iframes](https://developer.mozilla.org/en-US/docs/Web/Security/IFrame_credentialless). However, credentialless iframes come with a blank ephemeral storage partition. We hoped this drawback would be lessened by 3rd party cookie deprecation (3PCD). In the initial version of 3PCD, third party iframes would not have had access to credentials either, meaning that the delta between loading in a credentialless iframe and a regular iframe would have been small. But 3PCD now includes a sizable number of carve-outs or user driven opt-ins, meaning that it might actually take years for the delta to effectively reduce to a point where using credentialless iframes does not negatively impact functionality.
+
+Finally, credentialless iframes were designed for 3rd party iframes. However, we find that large applications can struggle with getting 1st party iframes to enforce COEP. These iframes might be maintained by other parts of the organization that have different priorities from the top-level frame that want to get access to COI-gated APIs, and might not prioritize supporting COEP. This adds a lot of delay to COI deployment in the top-level frame.
+
+#### Iframes getting access to COI-gated APIs
+The crossOriginIsolation model that we built was designed to give access to leaky APIs to the top-level frame (and same-origin frames). Access to COI-gated APIs would then be granted to cross-origin child frames by the top-level frame.
+
+COI was designed in this way because that’s the only model that works without OOPIF. At the same time, use cases that we had for SharedArrayBuffers at the time were all in the top-level frame.
+
+However, since then, various developers have expressed to us the desire to have access to COI-gated APIs in embedded widgets. For example, a chat widget or a 3d map rendering widget might need access to SABs for more efficient calculations, even if the top-level page that embeds it had no interest in SABs itself.
+
+In the current COI model, we have no solution for those use cases. Instead, widget developers would have to maintain two versions of their widgets, with and without SABs, and serve the SAB one only to embedders that deploy crossOriginIsolation. Maintaining two versions of a widget is impractical for most developers.
+
+### Out-of-process iframes evolving landscape
+Both of those issues can be solved if we leverage process isolation. We did not do so in the initial COI model because Chrome was the only browser vendor to ship it at the time. However, this is no longer the case.
+
+The other issue was more limited process isolation support on Chrome on Android. However, the APIs gated behind COI are mostly meant for compute heavy websites that are looking for extra computation performance. Developers that want to use SABs are mostly looking at desktop websites, where process isolation is supported. We believe they would be able to navigate the memory cost vs improved computation performance that process isolation on Android implies.
+
+Overall, we believe the time is right to develop a process-isolation based solution for crossOriginIsolation, which will make crossOriginIsolation much more deployable.
+
 ## [Potential Solution]
 
 [For each related element of the proposed solution - be it an additional JS method, a new object, a new element, a new concept etc., create a section which briefly describes it.]
