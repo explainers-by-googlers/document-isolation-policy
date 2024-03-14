@@ -93,19 +93,19 @@ Process-wide XS-Leaks can be direct. For example, [performance.measureUserAgentS
 
 Process-wide XS-Leaks can also take the form of a [Spectre](https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)) attack. Spectre is a security vulnerability affecting modern processors, enabling attackers to read arbitrary data from the process they are executing in. It exploits speculative execution, where processors execute instructions before receiving all necessary data, to access and steal sensitive information. This includes authenticated cross-origin resources loaded in the process. Spectre attacks’ efficiency is correlated to timer resolution. More precise timers make Spectre attacks faster. This includes direct timers like [performance.now](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now), but also timers constructed through SharedArrayBuffers.
 
-In the absence of [Site Isolation](https://www.chromium.org/Home/chromium-security/site-isolation/), an attacker can load a wide variety of authenticated cross-origin resources in their process:
-
-![Iframes, subresources and popups are placed in the same process without SiteIsolation](/background1.png)
+In the absence of [Site Isolation](https://www.chromium.org/Home/chromium-security/site-isolation/), an attacker can load a wide variety of authenticated cross-origin resources in their process.
 
 *Without Site Isolation, all resources (documents + subresources) for a Browsing Context Group are rendered in the same process.*
+
+![Iframes, subresources and popups are placed in the same process without SiteIsolation](/images/background1.png)
 
 All of the cross-origin resources loaded into a process are vulnerable, unless they load through [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS)[^1]. This is because cross-origin CORS requests are sent without credentials by default. In order to make credentialled requests, the cross-origin endpoint has to opt into the request being credentialled and the content shared with the cross-origin requestor.
 
 [^1]: Note that the CORS caveat only applies to subresources directly loaded by the attacker origin. All other subresources are still at risk.
 
-![Without SiteIsolation, all resources are at risk from an attacker](/background2.png)
-
 *Without Site Isolation, all non-CORS subresources and all documents are at risk from an attacker.*
+
+![Without SiteIsolation, all resources are at risk from an attacker](/images/background2.png)
 
 ### The cross-origin isolation model
 The [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) model was developed as a way to address the process-wide XS-Leak threat without requiring Site Isolation and CORS for all subresources.
@@ -117,9 +117,9 @@ First, cross-origin isolation identifies APIs that pose higher risk of process w
 
 [Cross-Origin-Embedder-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) (COEP) addresses the threat to subresources and embedded iframes. It requires non-CORS subresources to either opt into being loaded in the COEP context (COEP require-corp). Or it loads them without credentials (COEP credentialless).
 
-![COEP asks subresources for an opt-in or load them without credentials](/background3.png)
-
 *COEP protects subresources by asking for an opt-in or loading cross-origin resources without credentials.*
+
+![COEP asks subresources for an opt-in or load them without credentials](/images/background3.png)
 
 In the absence of Out-of-process-iframes, iframes are loaded in the same-process as their parent. To protect cross-origin iframes from their embedder, COEP requires cross-origin iframes embedded by a COEP document to opt into being embedded by sending a CORP header.
 
@@ -127,23 +127,23 @@ For the model to work, COEP needs to apply to all documents in the process. So C
 
 Because this is complex to deploy, Chrome also introduced credentialless iframes. A credentialless iframe allows a COEP document to embed documents without COEP. However, those documents only have access to an ephemeral storage partition, initially blank. This ensures that they do not have access to stored credentials. This is safe in the XS-Leak threat model because we are concerned with personalized user data.
 
-![COEP ensures all resources of a page are protected](/background4.png)
-
 *COEP protects cross-origin resources of the page.*
+
+![COEP ensures all resources of a page are protected](/images/background4.png)
 
 [Cross-Origin-Opener-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy) (COOP) protects other pages that would normally be loaded in the same process as an attacker without Site Isolation. COOP same-origin triggers a browsing context group switch when navigating to a page with a different top-level origin and/or COOP. Pages in a different browsing context group cannot communicate with each other, so it is safe to place them in different processes, even without Out-Of-Process-IFrames (OOPIF).
 
 The proposed [COOP restrict-properties](https://github.com/WICG/coop-restrict-properties) restrict WindowProxy properties available to documents in pages with a different top-level origin. It also prevents synchronous DOM access between documents in pages with a different top-level origin. The latter part allows the browser to place the two pages in different processes.
 
-![COOP restricts access to popups](/background5.png)
-
 *COOP protects other pages from an attacker by restricting access to pages opened.*
+
+![COOP restricts access to popups](/images/background5.png)
 
 When the top-level frame enforces both COOP and COEP, the page becomes cross-origin isolated. It gains access to powerful but leaky APIs.
 
-![COI is a safe model for powerful APIs](/background6.png)
-
 *CrossOriginIsolation provides a secure model to gain access to leaky APIs even in the absence of OOPIF.*
+
+![COI is a safe model for powerful APIs](/images/background6.png)
 
 Finally, the last piece of the puzzle is a [permission policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy). By default, cross-origin iframes do not have access to COI-gated APIs, even if their parent has enabled COI. The parent must delegate the permission for them to gain access to the APIs. This ensures that the parent is adequately protected against XS-Leaks exploits coming from its child frames.
 
