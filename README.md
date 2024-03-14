@@ -173,7 +173,168 @@ The other issue was more limited process isolation support on Chrome on Android.
 
 Overall, we believe the time is right to develop a process-isolation based solution for crossOriginIsolation, which will make crossOriginIsolation much more deployable.
 
-## [Potential Solution]
+## Document-Isolation-Policy
+
+We propose introducing a new security policy, Document-Isolation-Policy which will enable crossOriginIsolation for the document. The safety of the model will be backed by isolating the document when the browser is able to do so. When the browser cannot provide the necessary process isolation, COI-gated APIs will not be available.
+
+### Document-Isolation-Policy header
+We introduce a new policy Document-Isolation-Policy, backed by an HTTP header. The policy can have three values:
+
+```
+Document-Isolation-Policy: none
+Document-Isolation-Policy: isolate-and-credentialless
+Document-Isolation-Policy: isolate-and-require-corp
+```
+
+`none` is the default value. It does not do anything.
+
+`isolate-and-credentialless` impacts agent cluster allocation for the document. It also forces no-cors cross-origin requests to be sent without credentials for subresources embedded by the document (like [COEP credentialless](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy#credentialless)).
+
+`isolate-and-require-corp` impacts agent cluster allocation for the document. Additionally, the document can only load subresources from the same origin, or subresources explicitly marked as loadable from another origin. For non-cors requests, the response should have an appropriate Cross-Origin-Resource-Policy header (like [COEP require-corp](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy#credentialless)).
+
+### Interaction with COEP
+The policy exists side-by-side with [COEP](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) and does not influence it. In particular, an iframe with Document-Isolation-Policy but not COEP may not be embedded in a COEP document.
+
+In case COEP and Document-Isolation-Policy specify different behavior for subresource checks (i.e. require-corp and credentialless), both should be applied.
+
+### Interaction with COOP
+[COOP same-origin](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy#same-origin) and [COOP same-origin-allow-popups](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy#same-origin-allow-popups) force browsing context group switches, which yields a new set of agent clusters. Document-Isolation-Policy would take effect after COOP has been applied.
+
+When it comes to enabling COI, Document-Isolation-Policy can solve the problem [COOP restrict-properties](https://github.com/WICG/coop-restrict-properties) was trying to solve (communicating with cross-origin popups from a COI page). In order to solve the issue, COOP restrict-properties uses a similar mechanism of agent clustering. We believe that it is better to ship only one such mechanism. So our plan is to remove the agent clustering changes from COOP restrict-properties. This means that COOP restrict-properties will not enable COI. Instead, we plan to redesign COOP restrict-properties to focus on protecting websites against WindowProxy-based XS-Leaks (e.g. frame counting). See this [section](#COOP-restrict-properties) around alternatives considered for a longer discussion on why we’re making this choice.
+
+### Interaction with Permission Policy
+Currently, COI-gated APIs are further gated behind a [Permission Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy). They are disabled by default for iframes that are cross-origin with the top-level frame. The sole reason for this situation is that the iframes might be located in the same process as the top-level frame in the absence of OOPIF. Having access to COI-gated APIs would allow them to attack the top-level frame.
+
+If we can support process isolation of an iframe through the Document-Isolation-Policy model, there is no reason to restrict its usage of COI-gated APIs. Normally this should be the case. So a document with COEP and Document-Isolation-Policy should have access to COI-gated APIs, whether the top-level delegated the permission or not.
+
+In some cases, the browser might not be able to support isolating the document with Document-Isolation-Policy in a different process. As discussed in the [agent clustering section](#impact-on-agent-clustering), when this happens the document gets an IsolationLevel of Logical, which does not grant access to COI-gated APIs. So exempting documents with Document-Isolation-Policy from the permission policy for COI-gated APIs is not an issue. We can simply reformulate the existing policy as a policy allowing the use of COI-gated APIs in documents without Document-Isolation-Policy.
+
+Should we introduce a new COI-gated API that should be restricted for cross-origin iframes for reasons other than process-wide XS-Leak risks, then we will add a specific PermissionPolicy for this particular API. It will also apply to documents with Document-Isolation-Policy.
+
+### Interaction with the Origin-Agent-Cluster header
+Like COOP and COEP, Document-Isolation-Policy implies `Origin-Agent-Cluster: 1`. In particular, the [Origin-Agent-Cluster](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Origin-Agent-Cluster) header will be ignored if a Document-Isolation-Policy header is provided. See this [section](#origin-agent-cluster) for a longer discussion on why we chose to introduce a new header rather than extending the Origin-Agent-Cluster header.
+
+### Impact on agent clustering
+First, we leverage the [crossOriginIsolationMode](https://html.spec.whatwg.org/#cross-origin-isolation-mode) concept in the HTML spec. CrossOriginIsolationMode has three values:
+- None: the default of the web.
+- Logical: the context is constrained in its interactions with other contexts, but the browser is backing this isolation by process isolation.
+- Concrete: the context is constrained in its interactions with other contexts and the browser is backing this isolation with process isolation. The document is eligible to get access to COI-gated APIs (if ok with Permission Policy).
+
+We then define an IsolationKey, which is composed of:
+- An origin. This is the origin of the document that requested isolation (through COOP, COEP and Document-Isolation-Policy).
+- A crossOriginIsolationMode of at least Logical.
+
+We then add an optional IsolationKey parameter to agent cluster keys. The agent cluster key then becomes:
+- A site URL
+- Or an origin.
+- Or an origin and an IsolationKey. In this case, the origin and the origin in the IsolationKey can be different. This can be the case for documents in a page with COOP and COEP, where the origin in the isolation key is the top-level origin of the page. Whereas the origin in the agent cluster key is the origin of the document.
+
+
+By default, documents get an agent cluster key that matches the IsolationLevel of their browsing context group.
+
+If a document has a Document-Isolation-Policy of `isolate-and-credentialless` or `isolate-and-require-corp`, its agent cluster key will be:
+- `{document origin, {document origin, concrete}}` if the browser can support the required process isolation.
+- `{document origin, {document origin, logical}}` otherwise.
+
+Let’s go in a bit more detail over all the possible situations depending on the IsolationLevel of the browsing context group.
+
+**Case 1: the browsing context group has an IsolationLevel of None**
+
+This is the default of the web. By default, agent clusters for documents have an agent cluster key of `{document origin}`. If the document sends an `Origin-Agent-Cluster: 0` header, then the agent cluster key would be `{document site}`.
+
+If a document has a Document-Isolation-Policy of `isolate-and-require-corp` or `isolate-and-credentialless`, its agent cluster key will be:
+- `{document origin, {document origin, concrete}}`if the browser can support the required process isolation.
+- `{document origin, {document origin, logical}}` otherwise.
+
+*Document-Isolation-Policy impacts agent clustering. In this example, the two same-origin frames do not have synchronous script access to one another. However, they share the same storage partition and cookie partition.*
+
+![DIP impacts agent clustering](/images/agent-cluster1.png)
+
+*When the browser cannot support process isolation for the document, Document-Isolation-Policy does not give access to COI-gated APIs.*
+
+![No SiteIsolation gives no access to COI gated APIs](/images/agent-cluster2.png)
+
+**Case 2: the browsing context group has an IsolationLevel of Logical**
+
+In this case, all top-level documents in the browsing context group have COEP and COOP. This should normally give them access to COI-gated APIs. But the browser cannot support any form of process isolation so it’s not possible to safely give access to COI gated APIs at all. This is currently the case on Chrome Android WebView.
+
+In this case, documents have an agent cluster key of `{document origin, {top-level origin, logical}}`. The top-level origin is guaranteed to be the same for all documents in the browsing context group due to COOP same-origin.
+
+If a document has a Document-Isolation-Policy of `isolate-and-require-corp` or `isolated-and-credentialless`, its agent cluster key will be `{document origin, {document origin, logical}}`. If the browser cannot support page-level isolation for COI, it certainly cannot support iframe isolation either.
+
+*In this situation, no frame gets access to COI-gated APIs because the browser cannot support the underlying process isolation. The frame with Document-Isolation-Policy does have DOM access to the other same-origin frame.*
+
+![No access to COI gated APIs because of no process isolation](/images/agent-cluster3.png)
+
+**Case 3: the browsing context group has an IsolationLevel of CrossOriginIsolation**
+
+In this case, all top-level documents in the browsing context group have COEP and COOP. This gives them access to COI-gated APIs, backed by process isolation of the browsing context group.
+
+In this case, documents have an agent cluster key of `{document origin, {top-level origin, cconcrete}}`. The top-level origin is guaranteed to be the same for all documents in the browsing context group due to COOP same-origin.
+
+If a document has a Document-Isolation-Policy of `isolate-and-require-corp` or `isolate-and-credentialless`, and the browser can support process isolation for the document, then its agent cluster key will be `{document origin, {document origin, crossOriginIsolation}}`. Note that this may happen in a credentialless iframe, and the document will also get access to COI in this case.
+
+If the browser cannot support process isolation for a document, and the document is same-origin with the top-level frame, then its agent cluster key is still `{document origin, {document origin, crossOriginIsolation}}` because it is the same as `{document origin, {top-level origin, concrete}}`. This allows a website to first gain access to COI using Document-Isolation-Policy before working on getting it through COOP for platforms that do not support Document-Isolation-Policy.
+
+If the browser cannot support process isolation for a document cross-origin with the top-level frame, then we have again two options:
+1. Setting its agent cluster key to `{document origin, {document origin, logical}}`. This means the document will not get access to COI-gated APIs, but will have an isolation behavior that is consistent.
+2. Keeping its agent cluster key to `{document origin, {top-level origin, crossOriginIsolation}}`. In this case, the document might get access to COI-gated APIs if the permission is delegated by the parent.
+
+We believe that option 1 is the best again, due to consistency. The document will never get access to COI gated APIs. But this case can only happen if either:
+- A same-origin property decides to both get access to COI through COOP and Document-Isolation-Policy. This can easily be fixed by choosing one or the other.
+- A cross-origin iframe with Document-Isolation-Policy gets embedded in a page with COOP and COEP. But it would need permission delegation to use COI-gated APIs in the first place, which is unlikely to happen.
+
+*In this situation, the two b.com iframes without Document-Isolation-Policy have DOM access to each other, but not to the iframe with Document-Isolation-Policy. The iframes not loaded in a credentialless iframe share a StorageKey and NetworkKey.*
+
+![Different COI iframes](/images/agent-cluster4.png)
+
+*In this situation, the browser cannot support frame isolation. The b.com ifames without Document-Isolation-Policy have DOM access to each other. The ones not loaded in an anonymous iframe share a StorageKey and NetworkKey.*
+
+![Only page level COI suuported](/images/agent-cluster5.png)
+
+### Interaction with Fetch
+Document-Isolation-Policy can apply checks on subresources that are similar to COEP.
+
+`Document-Isolation-Policy: isolate-and-require-corp` requires cross-origin subresources not loaded through CORS to have a CORP header to be loaded. This is checked during the [CORP check](https://fetch.spec.whatwg.org/#cross-origin-resource-policy-header) in Fetch. The existing check for COEP should be extended so that Document-Isolation-Policy is also taken into account.
+
+`Document-Isolation-Policy: credentialless` requires cross-origin subresource requests made without CORS to be loaded without credentials. We’ll extend the check in the [main Fetch algorithm](https://fetch.spec.whatwg.org/#http-network-or-cache-fetch) so that it also applies to Document-Isolation-policy and not just COEP credentialless.
+
+### Inheritance
+Document-Isolation-Policy will be stored in the PolicyContainer and follow the regular inheritance model for policy inheritance (unlike COOP and COEP). The underlying process isolation ensures that documents with Document-Isolation-Policy only share their process with same-origin documents that are crossOriginIsolated. So any new document created by the DIP document in the same process should also be same-origin and crossOriginIsolated. The standard behavior for policy inheritance is to inherit the origin from the creator, and its security policies. In this case, the document would inherit its origin and Document-Isolation-Policy from its creator, making crossOriginIsolated.
+
+### Interactions with workers
+Document-Isolation-State and the crossOriginIsolation status should be inherited from the creator of a DedicatedWorker or a SharedWorker.
+
+ServiceWorkers should honor the subresource checks mandated by Document-Isolation-Policy, just as they do for COEP. ServiceWorkers can also have a COEP of their own. There is no plan to do something similar for Document-Isolation-Policy. For ServiceWorkers, COEP is sufficient to enable crossOriginIsolation and there are no deployment concerns that Document-Isolation-Policy would fix. In fact, a Document-Isolation-Policy specific to ServiceWorkers would look exactly like COEP.
+
+### Interaction with Isolated Web Apps
+TODO
+
+### Reporting
+We will provide reporting for Document-Isolation-Policy using the reporting API. We will also provide a report-only mode for the policy. This will be similar to COOP and COEP.
+
+Example:
+
+```
+Document-Isolation-Policy: isolate-agent-cluster;report-to="endpoint"
+Document-Isolation-Policy-Report-Only: isolate-agent-cluster;report-to="endpoint"
+```
+
+The browser will send reports when it detects same-origin documents with a different IsolationLevel in the browsing context group. In report-only mode, the browser sends reports when it detects same-origin documents in the browsing context group that would have a different IsolationLevel if Document-Isolation-Policy was enforced. This allows the developer to know that those documents have lost/would lose DOM access to each other.
+
+When navigating to a document with Document-Isolation-Policy reporting enabled, the browser collects a list of all same-origin documents in the browsing context. Then, for each document:
+1. Check if the IsolationLevel of the navigating document matches the one of the existing document.
+2. If not:
+    1. If the navigating document’s DocumentIsolationPolicy has an endpoint, send a report to it.
+    2. If the existing document's DocumentIsolationPolicy has an endpoint, send a report to it.
+3. Compute the IsolationLevel that would be applied to the navigating document and the existing document if their report-only DocumentIsolationPolicy and COEP were applied. If they match do not send a report. Developers will often deploy a report-only policy on several frames before actually enforcing it. This avoids sending them spurious reports.
+4. Check the report-only IsolationLevel of the navigating document against the IsolationLevel of the existing document and vice versa. If any of the checks match, do not send a report.
+5. If there was no match using report-only policies:
+    1. If the navigating document’s report-only DocumentIsolationPolicy has an endpoint, send a report to it.
+    2. If the existing document's report-only DocumentIsolationPolicy has an endpoint, send a report to it.
+
+A report would contain the following:
+
 
 [For each related element of the proposed solution - be it an additional JS method, a new object, a new element, a new concept etc., create a section which briefly describes it.]
 
