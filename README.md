@@ -320,42 +320,38 @@ Document-Isolation-Policy: isolate-agent-cluster;report-to="endpoint"
 Document-Isolation-Policy-Report-Only: isolate-agent-cluster;report-to="endpoint"
 ```
 
-The browser will send reports when it detects same-origin documents with a different IsolationLevel in the browsing context group. In report-only mode, the browser sends reports when it detects same-origin documents in the browsing context group that would have a different IsolationLevel if Document-Isolation-Policy was enforced. This allows the developer to know that those documents have lost/would lose DOM access to each other.
+The browser will send reports when it detects same-origin documents with a different crossOriginIsolationMode in the browsing context group. In report-only mode, the browser sends reports when it detects same-origin documents in the browsing context group that would have a different IsolationLevel if Document-Isolation-Policy was enforced. This allows the developer to know that those documents have lost/would lose DOM access to each other.
 
 When navigating to a document with Document-Isolation-Policy reporting enabled, the browser collects a list of all same-origin documents in the browsing context. Then, for each document:
-1. Check if the IsolationLevel of the navigating document matches the one of the existing document.
+1. Check if the crossOriginIsolationMode of the navigating document matches the one of the existing document.
 2. If not:
     1. If the navigating document’s DocumentIsolationPolicy has an endpoint, send a report to it.
     2. If the existing document's DocumentIsolationPolicy has an endpoint, send a report to it.
-3. Compute the IsolationLevel that would be applied to the navigating document and the existing document if their report-only DocumentIsolationPolicy and COEP were applied. If they match do not send a report. Developers will often deploy a report-only policy on several frames before actually enforcing it. This avoids sending them spurious reports.
-4. Check the report-only IsolationLevel of the navigating document against the IsolationLevel of the existing document and vice versa. If any of the checks match, do not send a report.
+3. Compute the crossOriginIsolationMode that would be applied to the navigating document and the existing document if their report-only DocumentIsolationPolicy was applied. If they match do not send a report. Developers will often deploy a report-only policy on several frames before actually enforcing it. This avoids sending them spurious reports.
+4. Check the report-only crossOriginIsolationMode of the navigating document against the IsolationLevel of the existing document and vice versa. If any of the checks match, do not send a report.
 5. If there was no match using report-only policies:
     1. If the navigating document’s report-only DocumentIsolationPolicy has an endpoint, send a report to it.
     2. If the existing document's report-only DocumentIsolationPolicy has an endpoint, send a report to it.
 
 A report would contain the following:
 
-
-[For each related element of the proposed solution - be it an additional JS method, a new object, a new element, a new concept etc., create a section which briefly describes it.]
-
-```js
-// Provide example code - not IDL - demonstrating the design of the feature.
-
-// If this API can be used on its own to address a user need,
-// link it back to one of the scenarios in the goals section.
-
-// If you need to show how to get the feature set up
-// (initialized, or using permissions, etc.), include that too.
+```
+{
+reportingDocumentUrl: URL,
+reportingDocumentCrossOriginIsolationMode: cross-origin-isolation-mode,
+reportingDocumentIsolationPolicy: document-isolation-policy value,
+otherDocumentUrl: URL,
+otherDocumentCrossOriginIsolationMode: cross-origin-isolation-mode,
+otherDocumentIsolationPolicy: document-isolation-policy value,
+enforcement: boolean,
+}
 ```
 
-[Where necessary, provide links to longer explanations of the relevant pre-existing concepts and API.
-If there is no suitable external documentation, you might like to provide supplementary information as an appendix in this document, and provide an internal link where appropriate.]
+Because all the documents are same-origin with each other and in the same browsing context group, the report does not leak any kind of information. Should communication between same-origin frames in a browsing context group be limited due to 3PCD, we will limit the reports sent accordingly.
 
-[If this is already specced, link to the relevant section of the spec.]
+While it would be ideal to warn about DOM accesses that would be blocked by Document-Isolation-Policy, this would impose too much of a performance cost. So reports will be limited to warning about potential issues between frames.
 
-[If spec work is in progress, link to the PR or draft of the spec.]
-
-[If you have more potential solutions in mind, add ## Potential Solution 2, 3, etc. sections.]
+For subresource checks, we will send reports similar to COEP require-corp and credentialless.
 
 ### How this solution would solve the use cases
 
@@ -373,36 +369,76 @@ If there is no suitable external documentation, you might like to provide supple
 
 [etc.]
 
-## Detailed design discussion
-
-### [Tricky design choice #1]
-
-[Talk through the tradeoffs in coming to the specific design point you want to make.]
-
-```js
-// Illustrated with example code.
-```
-
-[This may be an open question,
-in which case you should link to any active discussion threads.]
-
-### [Tricky design choice 2]
-
-[etc.]
-
 ## Considered alternatives
 
-[This should include as many alternatives as you can,
-from high level architectural decisions down to alternative naming choices.]
+### COOP restrict-properties
 
-### [Alternative 1]
+[COOP restrict-properties](https://github.com/WICG/coop-restrict-properties) aims at solving the problem of deploying crossOriginIsolation while preserving communication with popups and also preventing various XS-Leaks based on windowProxy APIs (such as frame counting). It achieves the former by having a similar effect on agent clustering as Document-Isolation-Policy at a page level, and the latter by restricting WindowProxy access between pages with different top-level origins.
 
-[Describe an alternative which was considered,
-and why you decided against it.]
+The pros and cons of COOP restrict-properties compared to Document-Isolation-Policy when it comes to COI deployment are the following:
+Pros:
+- Can be supported without having out-of-process iframes.
 
-### [Alternative 2]
+Cons:
+- Does not solve the issue of embedding 3rd-party frames, only communication with cross-origin popups.
+- Does not allow to have COI in cross-origin subframes without the parent also having COI.
 
-[etc.]
+Various developers have been clear that they would be fine with a solution that works only on desktop but provides much easier COI deployment. After all, several users of SABs are using the reverse OT on Chrome which provides these exact properties (Chrome desktop only with no COI deployment). Overall, this means that even if we were to release COOP restrict-properties in its current state, we would still need to release Document-Isolation-Policy. The question is then should we release COOP restrict-properties in its current state?
+
+On the one hand, it would provide a way for pages in Chrome on low-end Android to get COI support if they have cross-origin popups. It might also be implemented by other browser vendors faster, though it's unclear if that is actually the case since the implementation of COOP restrict-properties is non-trivial, as we found out while implementing it on Chrome. While support for Safari is certainly of interest to websites that want to use SABs, support for low-end Android does not seem to be important. It seems that low-end Android cannot support heavy web apps that want to make use of SABs in the first place.
+
+Keeping the COI part in COOP restrict-properties has a complexity cost. Spec-wise, COOP restrict-properties need to rely on an agent keying mechanism that is similar but slightly different compared to Document-Isolation-Policy. We believe that having the two existing at the same time is going to be hard for developers to wrap their heads around. And it involves extra work for Document-Isolation-Policy, as we now have to take into account the interactions with COOP restrict-properties, which are not described in this explainer.
+
+The case for cross-origin popups is much simpler with Document-Isolation-Policy compared to COOP restrict-properties. In Chrome, we have a constraint that the initial empty document for a popup is always created in the process of its creator. With COOP restrict-properties, this is an issue when a cross-origin iframe opens a popup:
+
+![COOP rp and cross-origin popups](/images/coop-rp-popup.png)
+
+The initial empty document opened by a cross-origin iframe needs to be in its process, unless opened with rel no-opener Because the current model does not force process isolation, the cross-origin iframe can be in the same process as the top-level frame. Which means that a popup it opens will be in the process of the top-level frame as well. COOP same-origin avoids this issue by forcing popups opened from cross-origin frames to have rel no-opener. But that’s not practical for COOP restrict-properties which aims to preserve opener relationships. Instead, COOP restrict-properties add an origin to COOP to track which origin sent the COOP header in the first place. This origin is used to match COOP, and to restrict access to COI gated APIs when the COOP origin doesn’t match the top-level origin.
+
+This problem simply does not exist with Document-Isolation-Policy since we’re guaranteeing that the only documents in the process of the Document-Isolation-Policy + COEP are same-origin and also have Document-Isolation-Policy + COEP. So when any of those opens an about:blank popup, it is placed in the same process and it naturally inherits origin, Document-Isolation-Policy and COEP from the PolicyContainer, which is what we want.
+
+The COI constraints also hold back the design of COOP restrict-properties when it comes to protecting against WindowProxy-based XS-Leaks. If we do not have to uphold a particular process model in the absence of OOPIF, then we can provide more configuration options for COOP: restrict-properties. For example, applying to subframes, configuring which properties are restricted, allow-listing origins allowed to access, exempting cross-origin but same-site documents from the restrictions, …. This would make the policy more useful to users who want to use it to protect against WindowProxy XS-leaks. The fact that it no longer impacts same-origin frames makes it easier to deploy.
+
+Overall, there are more benefits to removing the interaction between COOP restrict-properties and Document-Isolation-Policy than trying to ship it and Document-Isolation-Policy at the same time. We should pursue this instead of attempting to make the two fit together and deal with extra-complexities.
+
+### Origin-Agent-Cluster
+
+[Origin-Agent-Cluster](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Origin-Agent-Cluster) is an existing header that allows a document to specify that it wants to be placed in an agent cluster keyed on origin rather than site URL. We could have tried to piggyback on the header rather than introduce a new header. There are a few rough edges when doing that:
+Origin-Agent-Cluster is meant to apply to a whole origin, and one document failing to send the header can lead to the default value being applied (no isolation). This is fine for memory optimization, but problematic for a header meant to gate access to APIs. Developers want consistent access to COI-gated APIs to avoid having to maintain two versions of their website.
+Origin-Agent-Cluster is meant as a performance header rather than a security one. This means that the browser makes no security guarantee, but also that Origin-Agent-Cluster will not negatively impact the performance of the website. Here, we want to make a different tradeoff with Document-Isolation-Policy, where we guarantee security at a potential memory cost.
+Origin-Agent-Cluster does not have a reporting policy, so we would have to introduce one.
+Origin-Agent-Cluster only applies to agent clustering, and we also need to impact sub-resource load.
+
+Overall, we can try to add a new value to Origin-Agent-Cluster rather than introduce a new header, but this new value will need to behave like the Document-Isolation-Policy header described here rather than the existing Origin-Agent-Cluster header. At this point, it is debatable what is clearer for developers.
+
+### Keeping the status quo
+CrossOriginIsolation defined by COOP + COEP is a model that is safe, can be supported by Chrome everywhere but on Android WebView, and could be supported by most browsers. It’s also very hard to deploy, leading to little adoption of APIs like SharedArrayBuffers (0.05% of page views instantiate a SAB in a COI environment). And we know that various developers like Google Workspace or Adobe Photoshop want to use SABs but do not manage to deploy crossOriginIsolation. SABs can improve computation time for heavy websites by ~40%, so getting access to them is needed to unlock more native-like computing capabilities for web applications. This is why the status quo is not desirable.
+
+We designed crossOriginIsolation in a context where OOPIFs were only available in Chrome. But since then, they have shipped on Firefox. Now that the feature is available in two different browser engines, we believe it should be part of the tradeoffs we’re looking at when proposing new web platform APIs.
+
+In this context, we think that it is better to revisit the tradeoffs we made when designing crossOriginIsolation. While Document-Isolation-Policy might not be supported on all platform initially (i.e. if memory constraints are too tight), it will greatly improve deployability on platforms where accessibility to SharedArrayBuffers matters.
+
+### Provide access to COI-gated APIs when full SiteIsolation is available
+This would mean going back to the situation prior to the introduction of crossOriginIsolation, where SABs were only available on Chrome desktop. Obviously, this makes SABs easily accessible to websites on Chrome desktop. However, compared to the status quo, this has the following drawbacks:
+- It does not protect subresources.
+- It does not protect cross-origin but same-site frames, unless the browser decides to use origin isolation. This is a problem for large entities which may have many different origins in the same site. One origin being compromised can then attack other origins with much higher value.
+- SABs would not be available on mobile because no browser on mobile supports full Site Isolation.
+- Browsers may implement process reuse mechanisms that can be abused by regular processes, so an attacker could force a cross-site document in its process. We could get around the issue by requiring a header in order to use COI-gated APIs and not follow this process reuse mechanism, but then that would essentially mean that we’re doing Document-Isolation-Policy just without the subresource part, which leaves subresources vulnerable.
+
+Compared to Document-Isolation-Policy, just relying on SiteIsolation is easier to deploy as it does not require COEP checks on subresources (credentialless or require corp). However, it has the exact same drawbacks as compared to the status quo. In particular, we think that we can support Document-Isolation-Policy on regular Chrome Android because it only isolates documents that want to use SABs instead of requiring full SiteIsolation for all websites on the platform. Thus, we believe that Document-Isolation-Policy has better tradeoffs for solving the issue of access to SABs than relying on full SiteIsolation.
+
+### Browsing context group switch instead of agent cluster keying
+The Document-Isolation-Policy proposal relies on agent cluster keying to achieve isolation, instead of browsing context group switches. This means that it introduces a situation where two same-origin documents might find themselves in different agent clusters and be unable to have DOM access to each other. This is unprecedented in the HTML spec.
+
+COOP restrict-properties was implemented in Chrome using the CoopRelatedGroup, which is an umbrella group of browsing context groups that still have access to each other WindowProxies, but no DOM access. In both cases, we want to have same-origin documents in a situation where they have asynchronous access through WindowProxy, but not synchronous DOM access.
+
+We believe that agent cluster keying is more appropriate in this case as the same-origin documents that don’t have access to each other might be on the same page. It would be weird for them to be in different browsing context groups.
+
+Additionally, the state we want to have is exactly the one of documents in different agent clusters. Rather than introducing a new concept that provide the same isolation as agent clusters, we believe that it is better to change how agent clusters are allocated.
+
+### Relying on COEP for the subresources checks
+The proposal for Document-Isolation-Policy bundles COEP-like checks on subresources with changes to agent clustering. We could imagine having the two as separate, with Document-Isolation-Policy just impacting agent clustering and waiving the COEP checks on embedded iframes. The later part is a bit complex, since we can't just take into account the COEP of the frame, but we must look at the whole ancestor chain to know if it is safe to waive the checks or not. Otherwise, we'd risk undermining the security model of COI by waiving checks in the case where we can support page-level but not frame-level COI. This complexity also translates into the reporting, which has to take into account both COEP and Document-Isolation-Policy. We believe it is simpler for developers to just have 1 header that does everything instead of two headers with complex interactions. However, that means we have to re-implement the subresources checks and reporting that are part of COEP.
+
 
 ## Stakeholder Feedback / Opposition
 
