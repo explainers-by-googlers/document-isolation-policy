@@ -1,14 +1,7 @@
 # Explainer for the Document-Isolation-Policy API
 
-**Instructions for the explainer author: Search for "todo" in this repository and update all the
-instances as appropriate. For the instances in `index.bs`, update the repository name, but you can
-leave the rest until you start the specification. Then delete the TODOs and this block of text.**
-
 This proposal is an early design sketch by the Chrome Web Platform Security team to describe the problem below and solicit
 feedback on the proposed solution. It has not been approved to ship in Chrome.
-
-TODO: Fill in the whole explainer template below using https://tag.w3.org/explainers/ as a
-reference. Look for [brackets].
 
 ## Authors
 
