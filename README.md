@@ -1,24 +1,21 @@
-# Explainer for the TODO API
+# Explainer for the Document-Isolation-Policy API
 
 **Instructions for the explainer author: Search for "todo" in this repository and update all the
 instances as appropriate. For the instances in `index.bs`, update the repository name, but you can
 leave the rest until you start the specification. Then delete the TODOs and this block of text.**
 
-This proposal is an early design sketch by [TODO: team] to describe the problem below and solicit
+This proposal is an early design sketch by the Chrome Web Platform Security team to describe the problem below and solicit
 feedback on the proposed solution. It has not been approved to ship in Chrome.
 
 TODO: Fill in the whole explainer template below using https://tag.w3.org/explainers/ as a
 reference. Look for [brackets].
 
-## Proponents
+## Authors
 
-- [Proponent team 1]
-- [Proponent team 2]
-- [etc.]
+- [Camille Lamy](https://github.com/camillelamy)
 
 ## Participate
-- https://github.com/explainers-by-googlers/[your-repository-name]/issues
-- [Discussion forum]
+- https://github.com/explainers-by-googlers/document-isolation-policy/issues
 
 ## Table of Contents [if the explainer is longer than one printed page]
 
@@ -50,10 +47,10 @@ reference. Look for [brackets].
 
 ## Introduction
 
-[The "executive summary" or "abstract".
-Explain in a few sentences what the goals of the project are,
-and a brief overview of how the solution works.
-This should be no more than 1-2 paragraphs.]
+Developers want to build applications that are fast using [SharedArrayBuffers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer) (SAB), which can improve computation time by ~40%. But SharedArrayBuffers allow to create high-precision timers that can be exploited in a [Spectre](https://en.wikipedia.org/wiki/Spectre_(security_vulnerability)) attack, allowing to leak cross-origin user data. To mitigate the risk, SharedArrayBuffers are gated behind [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) (COI). CrossOriginIsolation requires to deploy both [CrossOriginOpenerPolicy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Opener-Policy) (COOP) and [CrossOriginEmbedderPolicy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Embedder-Policy) (COEP). Both have proven hard to deploy, COOP because it prevents communication with cross-origin popups, and COEP because it imposes restrictions on third-party embeds. Finally, the whole COOP + COEP model is focused on providing access to SharedArrayBuffers to the top-level frame. Cross-origin embeds can only use SABs if their embedder deploys crossOriginIsolation and delegates the permission to use COI-gated APIs, making the availability of SABs in third-party iframes very unreliable.
+
+The API proposed in this document, Document-Isolation-Policy, is proposing to solve these deployment concerns by relying on the browser Out-of-Process-Iframe capability. It will provide a way to securely build fast applications using SharedArrayBuffers while maintaining communication with cross-origin popups (needed for OAuth and payment flows) and not requiring extra work to embed cross-origin iframes. Finally, it will be available for embedded widgets as well as top-level frames, allowing to build efficient compute heavy widgets that are embedded across a variety of websites (e.g. photo library, video conference iframe, etc…).
+
 
 ## Goals
 
@@ -64,11 +61,6 @@ elaborate in the Use cases section.]
 
 [If there are "adjacent" goals which may appear to be in scope but aren't,
 enumerate them here. This section may be fleshed out as your design progresses and you encounter necessary technical and other trade-offs.]
-
-## User research
-
-[If any user research has been conducted to inform your design choices,
-discuss the process and findings. User research should be more common than it is.]
 
 ## Use cases
 
