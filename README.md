@@ -355,19 +355,19 @@ For subresource checks, we will send reports similar to COEP require-corp and cr
 
 ### How this solution would solve the use cases
 
-[If there are a suite of interacting APIs, show how they work together to solve the use cases described.]
+#### App with cross-origin popup
 
-#### Use case 1
+The app can deploy a Document-Isolation-Policy of `isolated-and-credentialless` or `isolated-and-require-corp` on its documents. It will gain access to COI gated APIs, while retaining communication with cross-origin popups. It can also deploy Document-Isolation-Policy just on documents that need COI-gated APIs, but those document would lose direct DOM access to the rest of the same-origin documents of the app.
 
-[Description of the end-user scenario]
+If the platform does not have enough resources to support process isolation of the documents, then the app does not gain access to COI gated APIs. However, our use case is a compute heavy app that needs multithreading for better performance. The platforms these kinds of app run on should have enough resources to support the required isolation.
 
-```js
-// Sample code demonstrating how to use these APIs to address that scenario.
-```
+#### App with 3rd party iframe
 
-#### Use case 2
+Exactly like in the app with cross-origin popup case, the app can deploy a Document-Isolation-Policy of `isolated-and-credentialless` or `isolated-and-require-corp` on its documents. If the platform can support the isolation, it will get access to COI gated APIs. In any case, there are no particular restrictions on embedding cross-origin iframes.
 
-[etc.]
+#### Embedded widget
+
+An embedded iframe can deploy a Document-Isolation-Policy of `isolated-and-credentialless` or `isolated-and-require-corp` and gain access to COI-gated APIs, as long as the platform can support the necessary isolation. This is regardless of whether its embedder deployed COI or not.
 
 ## Considered alternatives
 
@@ -439,25 +439,21 @@ Additionally, the state we want to have is exactly the one of documents in diffe
 ### Relying on COEP for the subresources checks
 The proposal for Document-Isolation-Policy bundles COEP-like checks on subresources with changes to agent clustering. We could imagine having the two as separate, with Document-Isolation-Policy just impacting agent clustering and waiving the COEP checks on embedded iframes. The later part is a bit complex, since we can't just take into account the COEP of the frame, but we must look at the whole ancestor chain to know if it is safe to waive the checks or not. Otherwise, we'd risk undermining the security model of COI by waiving checks in the case where we can support page-level but not frame-level COI. This complexity also translates into the reporting, which has to take into account both COEP and Document-Isolation-Policy. We believe it is simpler for developers to just have 1 header that does everything instead of two headers with complex interactions. However, that means we have to re-implement the subresources checks and reporting that are part of COEP.
 
+### Restricting the ability to use Document-Isolation-Policy for cross-origin iframes
+
+Document-Isolation-Policy requires process isolation, which has a memory cost. If too many iframes in a page end up being process isolated, this could have a performance cost for the page, so we could have introduced a permission policy to restrict the ability of cross-origin iframes to get process isolated using Document-Isolation-Policy. This would also restrict their ability to use COI_gated APIs, as they cannot be properly isolated. We opted against it for two reasons:
+
+- we want to solve the use case of embedded widgets. Having their embedder be able to restrict the ability to use COI gated APIs is problematic, as this means that website developers have to maintain two versions of their widgets (with and without COI gated APIs), which is more costly and complex.
+- the problem of cross-origin iframes using too much memory is a more global one, and it's not clear this particular API should be restricted as opposed to the multitude of other APIs that also use memory.
 
 ## Stakeholder Feedback / Opposition
 
-[Implementors and other stakeholders may already have publicly stated positions on this work. If you can, list them here with links to evidence as appropriate.]
-
-- [Implementor A] : Positive
-- [Stakeholder B] : No signals
-- [Implementor C] : Negative
-
-[If appropriate, explain the reasons given by other implementors for their concerns.]
-
 ## References & acknowledgements
-
-[Your design will change and be informed by many people; acknowledge them in an ongoing way! It helps build community and, as we only get by through the contributions of many, is only fair.]
-
-[Unless you have a specific reason not to, these should be in alphabetical order.]
 
 Many thanks for valuable feedback and advice from:
 
-- [Person 1]
-- [Person 2]
-- [etc.]
+- [Artur Janc](https://github.com/arturjanc)https://github.com/arturjanc
+- [Charlie Reis](https://github.com/csreis)
+- [David Dworken](https://github.com/ddworken)
+- [Domenic Denicola](https://github.com/domenic)
+- [Mike West](https://github.com/mikewest)
