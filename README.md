@@ -60,6 +60,8 @@ We want to provide end users with web applications that can perform compute heav
 
 While the original [crossOriginIsolation](https://developer.mozilla.org/en-US/docs/Web/API/crossOriginIsolated) proposal was agnostic to the platform [SiteIsolation](https://www.chromium.org/Home/chromium-security/site-isolation/) capability, this proposal will rely on a browser's ability to isolate iframes in a different process from their embedder.
 
+We're also only considering the case of embedded widgets that have their own document. We do not plan to give access to COI-gated APIs to third-party scripts if their execution context does not deploy COI.
+
 ## Use cases
 
 ### App with cross-origin popup
@@ -291,6 +293,9 @@ We believe that option 1 is the best again, due to consistency. The document wil
 *In this situation, the browser cannot support frame isolation. The b.com ifames without Document-Isolation-Policy have DOM access to each other. The ones not loaded in an anonymous iframe share a StorageKey and NetworkKey.*
 
 ![Only page level COI suuported](/images/agent-cluster5.png)
+
+#### A note on SharedArrayBuffers and agent clusters
+SharedArrayBuffers can be passed to other execution contexts in the same agent clutser using postMessage. So Document-Isolation-Policy impacting agent clusters will also impact the ability to post SABs to other documents. In particular, it will not be possible to share a SAB from a crossOriginIsolated document to one that isn't, because they would not be in the same agent cluster. This is the case even if they are same-origin. We should probably update the error message developers get in that case, so that it mentions other factors beyond origin as the reason the SAB could not be posted.
 
 ### Interaction with Fetch
 Document-Isolation-Policy can apply checks on subresources that are similar to COEP.
