@@ -473,7 +473,7 @@ Document-Isolation-Policy requires process isolation, which has a memory cost. I
 
 Many thanks for valuable feedback and advice from:
 
-- [Artur Janc](https://github.com/arturjanc)https://github.com/arturjanc
+- [Artur Janc](https://github.com/arturjanc)
 - [Charlie Reis](https://github.com/csreis)
 - [David Dworken](https://github.com/ddworken)
 - [Domenic Denicola](https://github.com/domenic)
