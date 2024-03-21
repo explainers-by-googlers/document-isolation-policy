@@ -230,12 +230,12 @@ In some cases, the browser might not be able to support isolating the document w
 Should we introduce a new COI-gated API that should be restricted for cross-origin iframes for reasons other than process-wide XS-Leak risks, then we will add a specific PermissionPolicy for this particular API. It will also apply to documents with Document-Isolation-Policy.
 
 ### Interaction with the Origin-Agent-Cluster header
-Like COOP and COEP, Document-Isolation-Policy implies `Origin-Agent-Cluster: 1`. In particular, the [Origin-Agent-Cluster](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Origin-Agent-Cluster) header will be ignored if a Document-Isolation-Policy header is provided. See this [section](#origin-agent-cluster) for a longer discussion on why we chose to introduce a new header rather than extending the Origin-Agent-Cluster header.
+Like COOP and COEP, Document-Isolation-Policy implies `Origin-Agent-Cluster: ?1`. In particular, the [Origin-Agent-Cluster](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Origin-Agent-Cluster) header will be ignored if a Document-Isolation-Policy header is provided. See this [section](#origin-agent-cluster) for a longer discussion on why we chose to introduce a new header rather than extending the Origin-Agent-Cluster header.
 
 ### Impact on agent clustering
 First, we leverage the [crossOriginIsolationMode](https://html.spec.whatwg.org/#cross-origin-isolation-mode) concept in the HTML spec. CrossOriginIsolationMode has three values:
 - None: the default of the web.
-- Logical: the context is constrained in its interactions with other contexts, but the browser is backing this isolation by process isolation.
+- Logical: the context is constrained in its interactions with other contexts, but the browser is *not* backing this isolation by process isolation.
 - Concrete: the context is constrained in its interactions with other contexts and the browser is backing this isolation with process isolation. The document is eligible to get access to COI-gated APIs (if ok with Permission Policy).
 
 We then define an IsolationKey, which is composed of:
